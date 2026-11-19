@@ -7,13 +7,15 @@ const player = {
   y: 370,
 };
 
-// Pivot in source-image pixels: halfway between the first two rear bands.
-const BARREL_PIVOT_X = 74 / 85;
+// The barrel's circular pivot collar is centered 42 px from its left edge
+// and 11 px down from its top (85 x 22 source sprite).
+const BARREL_PIVOT_X = 42 / 85;
 const BARREL_PIVOT_Y = 11 / 22;
 
-// Center of the gray pivot cap on the stand sprite, in source-image pixels.
-const STAND_PIVOT_X = 35;
-const STAND_PIVOT_Y = 10;
+// Matching center of the gray pivot cap on the 52 x 36 stand sprite.
+// These coordinates come from the assembled reference on the supplied sheet.
+const STAND_PIVOT_X = 44;
+const STAND_PIVOT_Y = 6;
 
 let aimAngle = 0;
 
