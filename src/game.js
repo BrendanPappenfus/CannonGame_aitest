@@ -20,6 +20,8 @@ const MAX_CHARGE_MS = 1800;
 const MIN_PROJECTILE_SPEED = 260;
 const MAX_PROJECTILE_SPEED = 1050;
 const GRAVITY = 1050;
+const ROUND_DURATION_SECONDS = 120;
+const POINTS_PER_UPGRADE = 200;
 const TARGET_SPAWN_MIN_MS = 1500;
 const TARGET_SPAWN_MAX_MS = 2600;
 const MAX_TARGETS = 8;
@@ -33,6 +35,17 @@ const TARGETS = [
 ];
 
 let score = 0;
+let timeRemaining = ROUND_DURATION_SECONDS;
+let scoreTowardUpgrade = 0;
+let gamePaused = false;
+let gameOver = false;
+let upgradeChoices = [];
+let pendingUpgradePicks = 0;
+let chargeUpgradeLevel = 0;
+let targetSpawnUpgradeLevel = 0;
+let rareTargetUpgradeLevel = 0;
+let cannonballTier = 0;
+let cannonballSprites = [];
 let targets = [];
 let scorePopups = [];
 let nextTargetSpawn = 0;
@@ -55,16 +68,22 @@ function loadSprite(path) {
 
 const barrelPath = "public/assets/sprites/cannon/cannon_barrel01.png";
 const basePath = "public/assets/sprites/cannon/cannon_stand01.png";
-const ballPath = "public/assets/sprites/projectiles/cannonball_small01.png";
+const cannonballPaths = [
+  "public/assets/sprites/projectiles/cannonball_small01.png",
+  "public/assets/sprites/projectiles/cannonball_medium01.png",
+  "public/assets/sprites/projectiles/cannonball_large01.png",
+];
 
 async function startGame() {
   try {
-    const [barrel, base, cannonball, ...targetImages] = await Promise.all([
+    const [barrel, base, ...loadedSprites] = await Promise.all([
       loadSprite(barrelPath),
       loadSprite(basePath),
-      loadSprite(ballPath),
+      ...cannonballPaths.map(loadSprite),
       ...TARGETS.map((target) => loadSprite(target.path)),
     ]);
+    cannonballSprites = loadedSprites.slice(0, cannonballPaths.length);
+    const targetImages = loadedSprites.slice(cannonballPaths.length);
     const targetSprites = Object.fromEntries(
       TARGETS.map((target, index) => [target.type, targetImages[index]])
     );
@@ -77,8 +96,21 @@ async function startGame() {
 
     // Pointer events cover mouse, pen, and touch with one input path.
     canvas.addEventListener("pointerdown", (event) => {
-      if ((event.pointerType === "mouse" && event.button !== 0) ||
-          chargingSince !== null) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      const point = getCanvasPoint(event);
+
+      if (gamePaused && !gameOver) {
+        event.preventDefault();
+        handleUpgradeChoice(point);
+        return;
+      }
+      if (gameOver) {
+        event.preventDefault();
+        restartRun();
+        return;
+      }
+      if (chargingSince !== null || gamePaused) return;
+
       event.preventDefault();
       activePointerId = event.pointerId;
       chargingSince = performance.now();
@@ -86,7 +118,7 @@ async function startGame() {
       try {
         canvas.setPointerCapture(event.pointerId);
       } catch {
-        // The window-level release fallback below still handles the gesture.
+        // The window-level release fallback still handles the gesture.
       }
     });
 
@@ -96,7 +128,7 @@ async function startGame() {
           event.pointerId !== activePointerId) return;
       event?.preventDefault();
       // Fire before clearing the start time; fireProjectile uses it to calculate power.
-      fireProjectile(barrel, base, cannonball);
+      fireProjectile(barrel, base, cannonballSprites[cannonballTier]);
       chargingSince = null;
       activePointerId = null;
       charge = 0;
@@ -117,7 +149,7 @@ async function startGame() {
     canvas.addEventListener("lostpointercapture", cancelCharge);
     window.addEventListener("blur", cancelCharge);
 
-    requestAnimationFrame((time) => gameLoop(time, barrel, base, cannonball, targetSprites));
+    requestAnimationFrame((time) => gameLoop(time, barrel, base, targetSprites));
   } catch (error) {
     console.error(error);
   }
@@ -140,8 +172,9 @@ function getCannonPivot(base) {
 }
 
 function fireProjectile(barrel, base, cannonball) {
-  const heldFor = Math.min(performance.now() - chargingSince, MAX_CHARGE_MS);
-  const power = Math.max(0, heldFor / MAX_CHARGE_MS);
+  const effectiveChargeMs = MAX_CHARGE_MS / (1 + chargeUpgradeLevel * 0.35);
+  const heldFor = Math.min(performance.now() - chargingSince, effectiveChargeMs);
+  const power = Math.max(0, heldFor / effectiveChargeMs);
   const speed = MIN_PROJECTILE_SPEED +
     (MAX_PROJECTILE_SPEED - MIN_PROJECTILE_SPEED) * power;
 
@@ -160,18 +193,32 @@ function fireProjectile(barrel, base, cannonball) {
   });
 }
 
-function gameLoop(time, barrel, base, cannonball, targetSprites) {
+function gameLoop(time, barrel, base, targetSprites) {
   const deltaSeconds = lastFrameTime ? Math.min((time - lastFrameTime) / 1000, 0.04) : 0;
   lastFrameTime = time;
 
-  if (chargingSince !== null) {
-    charge = Math.min((time - chargingSince) / MAX_CHARGE_MS, 1);
+  if (!gamePaused && !gameOver) {
+    timeRemaining = Math.max(0, timeRemaining - deltaSeconds);
+    if (timeRemaining <= 0) {
+      gameOver = true;
+      chargingSince = null;
+      activePointerId = null;
+      charge = 0;
+    }
+
+    if (chargingSince !== null) {
+      const effectiveChargeMs = MAX_CHARGE_MS / (1 + chargeUpgradeLevel * 0.35);
+      charge = Math.min((time - chargingSince) / effectiveChargeMs, 1);
+    }
+
+    if (!gameOver) {
+      updateProjectiles(deltaSeconds);
+      updateTargets(time, deltaSeconds, targetSprites);
+    }
   }
 
-  updateProjectiles(deltaSeconds);
-  updateTargets(time, deltaSeconds, targetSprites);
   drawScene(barrel, base);
-  requestAnimationFrame((nextTime) => gameLoop(nextTime, barrel, base, cannonball, targetSprites));
+  requestAnimationFrame((nextTime) => gameLoop(nextTime, barrel, base, targetSprites));
 }
 
 function updateProjectiles(deltaSeconds) {
@@ -189,7 +236,7 @@ function updateProjectiles(deltaSeconds) {
         previousX, previousY, projectile.x, projectile.y,
         target.x, target.y, target.radius + 12
       )) {
-        score += target.points;
+        awardPoints(target.points);
         scorePopups.push({
           x: target.x,
           y: target.y,
@@ -227,8 +274,9 @@ function updateTargets(time, deltaSeconds, targetSprites) {
     nextTargetSpawn = time + 700;
   } else if (time >= nextTargetSpawn) {
     if (targets.length < MAX_TARGETS) spawnTarget(time, targetSprites);
-    nextTargetSpawn = time + TARGET_SPAWN_MIN_MS +
-      Math.random() * (TARGET_SPAWN_MAX_MS - TARGET_SPAWN_MIN_MS);
+    const spawnSpeed = Math.pow(0.82, targetSpawnUpgradeLevel);
+    nextTargetSpawn = time + (TARGET_SPAWN_MIN_MS +
+      Math.random() * (TARGET_SPAWN_MAX_MS - TARGET_SPAWN_MIN_MS)) * spawnSpeed;
   }
 
   for (let i = targets.length - 1; i >= 0; i--) {
@@ -246,11 +294,20 @@ function updateTargets(time, deltaSeconds, targetSprites) {
 }
 
 function spawnTarget(time, targetSprites) {
-  const totalWeight = TARGETS.reduce((sum, target) => sum + target.weight, 0);
+  const weightedTargets = TARGETS.map((target) => ({
+    ...target,
+    adjustedWeight: target.weight * (
+      target.type === "red" ? 1 :
+      target.type === "blue" ? 1 + rareTargetUpgradeLevel * 0.25 :
+      target.type === "green" ? 1 + rareTargetUpgradeLevel * 0.6 :
+      1 + rareTargetUpgradeLevel
+    ),
+  }));
+  const totalWeight = weightedTargets.reduce((sum, target) => sum + target.adjustedWeight, 0);
   let roll = Math.random() * totalWeight;
-  let selected = TARGETS[0];
-  for (const target of TARGETS) {
-    roll -= target.weight;
+  let selected = weightedTargets[0];
+  for (const target of weightedTargets) {
+    roll -= target.adjustedWeight;
     if (roll < 0) {
       selected = target;
       break;
@@ -302,6 +359,9 @@ function drawScene(barrel, base) {
   drawChargeMeter(base);
   drawScore();
   drawScorePopups();
+  drawTopProgressBar();
+  if (gamePaused && !gameOver) drawUpgradeScreen();
+  if (gameOver) drawGameOverScreen();
 }
 
 function drawTarget(target) {
@@ -330,16 +390,218 @@ function drawTarget(target) {
 function drawScore() {
   ctx.save();
   ctx.fillStyle = "rgba(30, 35, 45, 0.82)";
-  ctx.fillRect(canvas.width / 2 - 92, 12, 184, 42);
+  ctx.fillRect(canvas.width / 2 - 92, 20, 184, 42);
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 2;
-  ctx.strokeRect(canvas.width / 2 - 92, 12, 184, 42);
+  ctx.strokeRect(canvas.width / 2 - 92, 20, 184, 42);
   ctx.fillStyle = "#ffffff";
   ctx.font = "bold 21px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(`SCORE: ${score}`, canvas.width / 2, 33);
+  ctx.fillText(`SCORE: ${score}`, canvas.width / 2, 41);
+  ctx.fillStyle = "#263238";
+  ctx.font = "bold 17px sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText(formatTime(timeRemaining), canvas.width - 22, 41);
   ctx.restore();
+}
+
+function formatTime(seconds) {
+  const whole = Math.ceil(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+function awardPoints(points) {
+  score += points;
+  scoreTowardUpgrade += points;
+  while (scoreTowardUpgrade >= POINTS_PER_UPGRADE) {
+    scoreTowardUpgrade -= POINTS_PER_UPGRADE;
+    pendingUpgradePicks++;
+  }
+  if (!gamePaused && pendingUpgradePicks > 0) showUpgradeChoices();
+}
+
+const UPGRADE_DEFINITIONS = [
+  {
+    id: "faster-charge",
+    title: "Faster Charge",
+    description: "Charge your cannon 35% faster. Stacks with every pick.",
+    available: () => true,
+    apply: () => chargeUpgradeLevel++,
+  },
+  {
+    id: "more-targets",
+    title: "More Targets",
+    description: "Targets spawn 18% faster. Stacks with every pick.",
+    available: () => true,
+    apply: () => targetSpawnUpgradeLevel++,
+  },
+  {
+    id: "bigger-cannonballs",
+    title: "Bigger Cannonballs",
+    description: "Upgrade your cannonball to the next size.",
+    available: () => cannonballTier < cannonballSprites.length - 1,
+    apply: () => cannonballTier++,
+  },
+  {
+    id: "rarer-targets",
+    title: "Rarer Targets",
+    description: "Boost the odds of blue, green, and gold targets. Stacks.",
+    available: () => true,
+    apply: () => rareTargetUpgradeLevel++,
+  },
+];
+
+function showUpgradeChoices() {
+  gamePaused = true;
+  chargingSince = null;
+  activePointerId = null;
+  charge = 0;
+  const available = UPGRADE_DEFINITIONS.filter((upgrade) => upgrade.available());
+  upgradeChoices = shuffleArray(available).slice(0, Math.min(3, available.length));
+}
+
+function shuffleArray(items) {
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+function handleUpgradeChoice(point) {
+  const cardWidth = 250;
+  const gap = 18;
+  const totalWidth = cardWidth * upgradeChoices.length + gap * (upgradeChoices.length - 1);
+  const startX = (canvas.width - totalWidth) / 2;
+  const cardY = 220;
+  const cardHeight = 150;
+
+  for (let i = 0; i < upgradeChoices.length; i++) {
+    const x = startX + i * (cardWidth + gap);
+    if (point.x >= x && point.x <= x + cardWidth &&
+        point.y >= cardY && point.y <= cardY + cardHeight) {
+      upgradeChoices[i].apply();
+      pendingUpgradePicks = Math.max(0, pendingUpgradePicks - 1);
+      if (pendingUpgradePicks > 0) {
+        showUpgradeChoices();
+      } else {
+        upgradeChoices = [];
+        gamePaused = false;
+      }
+      return;
+    }
+  }
+}
+
+function drawTopProgressBar() {
+  const x = 0;
+  const y = 0;
+  const width = canvas.width;
+  const height = 8;
+  ctx.fillStyle = "#252b34";
+  ctx.fillRect(x, y, width, height);
+  ctx.fillStyle = "#f1c40f";
+  ctx.fillRect(x, y, width * (scoreTowardUpgrade / POINTS_PER_UPGRADE), height);
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(x, y + height - 1, width, 1);
+}
+
+function drawUpgradeScreen() {
+  ctx.save();
+  ctx.fillStyle = "rgba(15, 20, 30, 0.82)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "bold 32px sans-serif";
+  ctx.fillText("CHOOSE AN UPGRADE", canvas.width / 2, 155);
+  ctx.font = "16px sans-serif";
+  ctx.fillText("Gameplay and the round timer are paused", canvas.width / 2, 184);
+
+  const cardWidth = 250;
+  const gap = 18;
+  const totalWidth = cardWidth * upgradeChoices.length + gap * (upgradeChoices.length - 1);
+  const startX = (canvas.width - totalWidth) / 2;
+  const cardY = 220;
+  const cardHeight = 150;
+
+  upgradeChoices.forEach((upgrade, index) => {
+    const x = startX + index * (cardWidth + gap);
+    ctx.fillStyle = "#f4f5f7";
+    ctx.fillRect(x, cardY, cardWidth, cardHeight);
+    ctx.strokeStyle = "#e0b33d";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, cardY, cardWidth, cardHeight);
+
+    ctx.fillStyle = "#263238";
+    ctx.font = "bold 19px sans-serif";
+    ctx.fillText(upgrade.title, x + cardWidth / 2, cardY + 38);
+
+    ctx.font = "14px sans-serif";
+    wrapCanvasText(upgrade.description, x + cardWidth / 2, cardY + 76, cardWidth - 30, 20);
+    ctx.fillStyle = "#9a6b00";
+    ctx.font = "bold 12px sans-serif";
+    ctx.fillText("CLICK TO SELECT", x + cardWidth / 2, cardY + 128);
+  });
+  ctx.restore();
+}
+
+function wrapCanvasText(text, centerX, startY, maxWidth, lineHeight) {
+  const words = text.split(" ");
+  let line = "";
+  let y = startY;
+  ctx.textAlign = "center";
+  for (const word of words) {
+    const testLine = line ? line + " " + word : word;
+    if (ctx.measureText(testLine).width > maxWidth && line) {
+      ctx.fillText(line, centerX, y);
+      line = word;
+      y += lineHeight;
+    } else {
+      line = testLine;
+    }
+  }
+  if (line) ctx.fillText(line, centerX, y);
+}
+
+function drawGameOverScreen() {
+  ctx.save();
+  ctx.fillStyle = "rgba(15, 20, 30, 0.84)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "bold 42px sans-serif";
+  ctx.fillText("ROUND OVER", canvas.width / 2, 190);
+  ctx.font = "bold 28px sans-serif";
+  ctx.fillText(`FINAL SCORE: ${score}`, canvas.width / 2, 250);
+  ctx.font = "18px sans-serif";
+  ctx.fillText("Click anywhere to play again", canvas.width / 2, 310);
+  ctx.restore();
+}
+
+function restartRun() {
+  score = 0;
+  timeRemaining = ROUND_DURATION_SECONDS;
+  scoreTowardUpgrade = 0;
+  gamePaused = false;
+  gameOver = false;
+  upgradeChoices = [];
+  pendingUpgradePicks = 0;
+  chargeUpgradeLevel = 0;
+  targetSpawnUpgradeLevel = 0;
+  rareTargetUpgradeLevel = 0;
+  cannonballTier = 0;
+  targets = [];
+  projectiles.length = 0;
+  scorePopups = [];
+  nextTargetSpawn = 0;
+  chargingSince = null;
+  activePointerId = null;
+  charge = 0;
 }
 
 function drawScorePopups() {
