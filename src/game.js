@@ -19,7 +19,7 @@ const STAND_PIVOT_Y = 6;
 const MAX_CHARGE_MS = 1800;
 const MIN_PROJECTILE_SPEED = 260;
 const MAX_PROJECTILE_SPEED = 1050;
-const GRAVITY = 520;
+const GRAVITY = 1050;
 
 let aimAngle = 0;
 let chargingSince = null;
@@ -137,7 +137,6 @@ function fireProjectile(barrel, base, cannonball) {
     vx: Math.cos(aimAngle) * speed,
     vy: Math.sin(aimAngle) * speed,
     image: cannonball,
-    size: 3,
   });
 }
 
@@ -177,13 +176,16 @@ function drawScene(barrel, base) {
 
   // Projectiles are drawn first, behind the cannon artwork.
   for (const projectile of projectiles) {
-    const size = projectile.size * SPRITE_SCALE;
+    // Use the same pixel-art scale as the cannon, preserving the sprite's
+    // native width-to-height ratio rather than forcing it into a square.
+    const drawWidth = projectile.image.naturalWidth * SPRITE_SCALE;
+    const drawHeight = projectile.image.naturalHeight * SPRITE_SCALE;
     ctx.drawImage(
       projectile.image,
-      projectile.x - size / 2,
-      projectile.y - size / 2,
-      size,
-      size,
+      projectile.x - drawWidth / 2,
+      projectile.y - drawHeight / 2,
+      drawWidth,
+      drawHeight,
     );
   }
 
