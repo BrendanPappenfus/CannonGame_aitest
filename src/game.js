@@ -104,9 +104,8 @@ function fireProjectile(barrel, base, cannonball) {
     (MAX_PROJECTILE_SPEED - MIN_PROJECTILE_SPEED) * power;
 
   const pivot = getCannonPivot(base);
-  const muzzleOffsetX = (barrel.naturalWidth * BARREL_PIVOT_X) * SPRITE_SCALE;
-  const muzzleOffsetY = 0;
-  const muzzleDistance = muzzleOffsetX;
+  // Distance from the barrel pivot collar to the muzzle at the sprite's right edge.
+  const muzzleDistance = barrel.naturalWidth * (1 - BARREL_PIVOT_X) * SPRITE_SCALE;
   const muzzleX = pivot.x + Math.cos(aimAngle) * muzzleDistance;
   const muzzleY = pivot.y + Math.sin(aimAngle) * muzzleDistance;
 
