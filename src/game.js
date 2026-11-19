@@ -200,6 +200,7 @@ function fireProjectile(barrel, base, cannonball) {
     vx: Math.cos(aimAngle) * speed,
     vy: Math.sin(aimAngle) * speed,
     image: cannonball,
+    tier: cannonballTier,
   });
 }
 
@@ -271,8 +272,8 @@ function updateProjectiles(deltaSeconds) {
 
 function handleProjectileHit(projectile, hitTarget) {
   const splitChance = Math.min(1, splitShotLevel * 0.10);
-  if (cannonballTier > 0 && Math.random() < splitChance) {
-    const childTier = cannonballTier - 1;
+  if (projectile.tier > 0 && Math.random() < splitChance) {
+    const childTier = projectile.tier - 1;
     const speed = Math.hypot(projectile.vx, projectile.vy) * 0.82;
     const angle = Math.atan2(projectile.vy, projectile.vx);
     const spread = 0.24;
@@ -284,6 +285,7 @@ function handleProjectileHit(projectile, hitTarget) {
         vx: Math.cos(childAngle) * speed,
         vy: Math.sin(childAngle) * speed,
         image: cannonballSprites[childTier],
+        tier: childTier,
       });
     }
   }
