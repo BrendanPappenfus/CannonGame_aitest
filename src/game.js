@@ -20,6 +20,22 @@ const MAX_CHARGE_MS = 1800;
 const MIN_PROJECTILE_SPEED = 260;
 const MAX_PROJECTILE_SPEED = 1050;
 const GRAVITY = 1050;
+const TARGET_SPAWN_MIN_MS = 1500;
+const TARGET_SPAWN_MAX_MS = 2600;
+const MAX_TARGETS = 8;
+const TARGET_LIFETIME_MIN_MS = 9000;
+const TARGET_LIFETIME_MAX_MS = 15000;
+const TARGETS = [
+  { type: "red", color: "#e74c3c", points: 10, weight: 55 },
+  { type: "blue", color: "#3498db", points: 25, weight: 27 },
+  { type: "green", color: "#2ecc71", points: 50, weight: 13 },
+  { type: "gold", color: "#f1c40f", points: 100, weight: 5 },
+];
+
+let score = 0;
+let targets = [];
+let scorePopups = [];
+let nextTargetSpawn = 0;
 
 let aimAngle = 0;
 let chargingSince = null;
@@ -149,15 +165,37 @@ function gameLoop(time, barrel, base, cannonball) {
   }
 
   updateProjectiles(deltaSeconds);
+  updateTargets(time, deltaSeconds);
   drawScene(barrel, base);
   requestAnimationFrame((nextTime) => gameLoop(nextTime, barrel, base, cannonball));
 }
 
 function updateProjectiles(deltaSeconds) {
   for (const projectile of projectiles) {
+    const previousX = projectile.x;
+    const previousY = projectile.y;
     projectile.vy += GRAVITY * deltaSeconds;
     projectile.x += projectile.vx * deltaSeconds;
     projectile.y += projectile.vy * deltaSeconds;
+
+    // Check the whole movement segment so fast cannonballs do not skip targets.
+    for (let i = targets.length - 1; i >= 0; i--) {
+      const target = targets[i];
+      if (segmentHitsCircle(
+        previousX, previousY, projectile.x, projectile.y,
+        target.x, target.y, target.radius + 12
+      )) {
+        score += target.points;
+        scorePopups.push({
+          x: target.x,
+          y: target.y,
+          text: `+${target.points}`,
+          age: 0,
+          lifetime: 1100,
+        });
+        targets.splice(i, 1);
+      }
+    }
   }
 
   for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -168,13 +206,76 @@ function updateProjectiles(deltaSeconds) {
   }
 }
 
+function segmentHitsCircle(x1, y1, x2, y2, cx, cy, radius) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lengthSquared = dx * dx + dy * dy;
+  const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1,
+    ((cx - x1) * dx + (cy - y1) * dy) / lengthSquared
+  ));
+  const nearestX = x1 + t * dx;
+  const nearestY = y1 + t * dy;
+  return (cx - nearestX) ** 2 + (cy - nearestY) ** 2 <= radius ** 2;
+}
+
+function updateTargets(time, deltaSeconds) {
+  if (!nextTargetSpawn) {
+    nextTargetSpawn = time + 700;
+  } else if (time >= nextTargetSpawn) {
+    if (targets.length < MAX_TARGETS) spawnTarget(time);
+    nextTargetSpawn = time + TARGET_SPAWN_MIN_MS +
+      Math.random() * (TARGET_SPAWN_MAX_MS - TARGET_SPAWN_MIN_MS);
+  }
+
+  for (let i = targets.length - 1; i >= 0; i--) {
+    const target = targets[i];
+    target.age += deltaSeconds * 1000;
+    if (target.age >= target.lifetime) targets.splice(i, 1);
+  }
+
+  for (let i = scorePopups.length - 1; i >= 0; i--) {
+    scorePopups[i].age += deltaSeconds * 1000;
+    if (scorePopups[i].age >= scorePopups[i].lifetime) {
+      scorePopups.splice(i, 1);
+    }
+  }
+}
+
+function spawnTarget(time) {
+  const totalWeight = TARGETS.reduce((sum, target) => sum + target.weight, 0);
+  let roll = Math.random() * totalWeight;
+  let selected = TARGETS[0];
+  for (const target of TARGETS) {
+    roll -= target.weight;
+    if (roll < 0) {
+      selected = target;
+      break;
+    }
+  }
+
+  const lifetime = TARGET_LIFETIME_MIN_MS +
+    Math.random() * (TARGET_LIFETIME_MAX_MS - TARGET_LIFETIME_MIN_MS);
+  targets.push({
+    ...selected,
+    x: 255 + Math.random() * 665,
+    y: 65 + Math.random() * 390,
+    radius: 19,
+    age: 0,
+    lifetime,
+    bornAt: time,
+  });
+}
+
 function drawScene(barrel, base) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = false;
 
-  // Projectiles are drawn first, behind the cannon artwork.
+  // Targets appear in the playfield in front of the cannon.
+  for (const target of targets) drawTarget(target);
+
+  // Projectiles are drawn behind the cannon artwork.
   for (const projectile of projectiles) {
     // Use the same pixel-art scale as the cannon, preserving the sprite's
     // native width-to-height ratio rather than forcing it into a square.
@@ -191,6 +292,82 @@ function drawScene(barrel, base) {
 
   drawPlayer(barrel, base);
   drawChargeMeter(base);
+  drawScore();
+  drawScorePopups();
+}
+
+function drawTarget(target) {
+  const remaining = Math.max(0, 1 - target.age / target.lifetime);
+  const fade = target.age > target.lifetime - 1800
+    ? Math.max(0, (target.lifetime - target.age) / 1800)
+    : 1;
+  const pulse = 1 + Math.sin(target.age / 180) * 0.035;
+
+  ctx.save();
+  ctx.globalAlpha = fade;
+  ctx.translate(target.x, target.y);
+  ctx.scale(pulse, pulse);
+
+  // Bright, layered bullseye targets with a distinct tier color.
+  ctx.fillStyle = "rgba(25, 30, 40, 0.18)";
+  ctx.beginPath();
+  ctx.arc(2, 3, target.radius + 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = target.color;
+  ctx.beginPath();
+  ctx.arc(0, 0, target.radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(0, 0, target.radius - 5, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.arc(0, 0, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#263238";
+  ctx.font = "bold 10px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(target.points.toString(), 0, target.radius + 13);
+  ctx.restore();
+}
+
+function drawScore() {
+  ctx.save();
+  ctx.fillStyle = "rgba(30, 35, 45, 0.82)";
+  ctx.fillRect(canvas.width / 2 - 92, 12, 184, 42);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(canvas.width / 2 - 92, 12, 184, 42);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 21px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(`SCORE: ${score}`, canvas.width / 2, 33);
+  ctx.restore();
+}
+
+function drawScorePopups() {
+  for (const popup of scorePopups) {
+    const progress = popup.age / popup.lifetime;
+    ctx.save();
+    ctx.globalAlpha = 1 - progress;
+    ctx.fillStyle = "#20252b";
+    ctx.font = "bold 22px sans-serif";
+    ctx.textAlign = "center";
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 4;
+    const y = popup.y - 18 - progress * 34;
+    ctx.strokeText(popup.text, popup.x, y);
+    ctx.fillText(popup.text, popup.x, y);
+    ctx.restore();
+  }
 }
 
 function drawPlayer(barrel, base) {
