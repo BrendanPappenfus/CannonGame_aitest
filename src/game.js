@@ -3,7 +3,7 @@ const ctx = canvas.getContext("2d");
 
 const SPRITE_SCALE = 3;
 const player = {
-  x: canvas.width / 2,
+  x: canvas.width / 2 + 30,
   y: 370,
 };
 
@@ -42,8 +42,8 @@ async function startGame() {
       const pivotY = player.y + 1 * SPRITE_SCALE;
       const targetAngle = Math.atan2(mouseY - pivotY, mouseX - pivotX);
 
-      // The artwork's muzzle points left, so offset the target direction by PI.
-      aimAngle = targetAngle - Math.PI;
+      // The muzzle points right in the source artwork, so use the target angle directly.
+      aimAngle = targetAngle;
       drawPlayer(barrel, base);
     });
 
