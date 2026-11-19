@@ -26,10 +26,10 @@ const MAX_TARGETS = 8;
 const TARGET_LIFETIME_MIN_MS = 9000;
 const TARGET_LIFETIME_MAX_MS = 15000;
 const TARGETS = [
-  { type: "red", color: "#e74c3c", points: 10, weight: 55 },
-  { type: "blue", color: "#3498db", points: 25, weight: 27 },
-  { type: "green", color: "#2ecc71", points: 50, weight: 13 },
-  { type: "gold", color: "#f1c40f", points: 100, weight: 5 },
+  { type: "red", points: 10, weight: 55, path: "public/assets/sprites/targets/red_target01.png" },
+  { type: "blue", points: 25, weight: 27, path: "public/assets/sprites/targets/blue_target01.png" },
+  { type: "green", points: 50, weight: 13, path: "public/assets/sprites/targets/green_target01.png" },
+  { type: "gold", points: 100, weight: 5, path: "public/assets/sprites/targets/gold_target01.png" },
 ];
 
 let score = 0;
@@ -59,11 +59,15 @@ const ballPath = "public/assets/sprites/projectiles/cannonball_small01.png";
 
 async function startGame() {
   try {
-    const [barrel, base, cannonball] = await Promise.all([
+    const [barrel, base, cannonball, ...targetImages] = await Promise.all([
       loadSprite(barrelPath),
       loadSprite(basePath),
       loadSprite(ballPath),
+      ...TARGETS.map((target) => loadSprite(target.path)),
     ]);
+    const targetSprites = Object.fromEntries(
+      TARGETS.map((target, index) => [target.type, targetImages[index]])
+    );
 
     canvas.addEventListener("pointermove", (event) => {
       const pointer = getCanvasPoint(event);
@@ -113,7 +117,7 @@ async function startGame() {
     canvas.addEventListener("lostpointercapture", cancelCharge);
     window.addEventListener("blur", cancelCharge);
 
-    requestAnimationFrame((time) => gameLoop(time, barrel, base, cannonball));
+    requestAnimationFrame((time) => gameLoop(time, barrel, base, cannonball, targetSprites));
   } catch (error) {
     console.error(error);
   }
@@ -156,7 +160,7 @@ function fireProjectile(barrel, base, cannonball) {
   });
 }
 
-function gameLoop(time, barrel, base, cannonball) {
+function gameLoop(time, barrel, base, cannonball, targetSprites) {
   const deltaSeconds = lastFrameTime ? Math.min((time - lastFrameTime) / 1000, 0.04) : 0;
   lastFrameTime = time;
 
@@ -165,9 +169,9 @@ function gameLoop(time, barrel, base, cannonball) {
   }
 
   updateProjectiles(deltaSeconds);
-  updateTargets(time, deltaSeconds);
+  updateTargets(time, deltaSeconds, targetSprites);
   drawScene(barrel, base);
-  requestAnimationFrame((nextTime) => gameLoop(nextTime, barrel, base, cannonball));
+  requestAnimationFrame((nextTime) => gameLoop(nextTime, barrel, base, cannonball, targetSprites));
 }
 
 function updateProjectiles(deltaSeconds) {
@@ -218,11 +222,11 @@ function segmentHitsCircle(x1, y1, x2, y2, cx, cy, radius) {
   return (cx - nearestX) ** 2 + (cy - nearestY) ** 2 <= radius ** 2;
 }
 
-function updateTargets(time, deltaSeconds) {
+function updateTargets(time, deltaSeconds, targetSprites) {
   if (!nextTargetSpawn) {
     nextTargetSpawn = time + 700;
   } else if (time >= nextTargetSpawn) {
-    if (targets.length < MAX_TARGETS) spawnTarget(time);
+    if (targets.length < MAX_TARGETS) spawnTarget(time, targetSprites);
     nextTargetSpawn = time + TARGET_SPAWN_MIN_MS +
       Math.random() * (TARGET_SPAWN_MAX_MS - TARGET_SPAWN_MIN_MS);
   }
@@ -241,7 +245,7 @@ function updateTargets(time, deltaSeconds) {
   }
 }
 
-function spawnTarget(time) {
+function spawnTarget(time, targetSprites) {
   const totalWeight = TARGETS.reduce((sum, target) => sum + target.weight, 0);
   let roll = Math.random() * totalWeight;
   let selected = TARGETS[0];
@@ -257,9 +261,13 @@ function spawnTarget(time) {
     Math.random() * (TARGET_LIFETIME_MAX_MS - TARGET_LIFETIME_MIN_MS);
   targets.push({
     ...selected,
+    image: targetSprites[selected.type],
     x: 255 + Math.random() * 665,
     y: 65 + Math.random() * 390,
-    radius: 19,
+    radius: Math.max(
+      targetSprites[selected.type].naturalWidth,
+      targetSprites[selected.type].naturalHeight
+    ) * SPRITE_SCALE / 2,
     age: 0,
     lifetime,
     bornAt: time,
@@ -297,44 +305,25 @@ function drawScene(barrel, base) {
 }
 
 function drawTarget(target) {
-  const remaining = Math.max(0, 1 - target.age / target.lifetime);
   const fade = target.age > target.lifetime - 1800
     ? Math.max(0, (target.lifetime - target.age) / 1800)
     : 1;
-  const pulse = 1 + Math.sin(target.age / 180) * 0.035;
+  const pulse = 1 + Math.sin(target.age / 180) * 0.025;
+  const drawWidth = target.image.naturalWidth * SPRITE_SCALE;
+  const drawHeight = target.image.naturalHeight * SPRITE_SCALE;
 
   ctx.save();
   ctx.globalAlpha = fade;
   ctx.translate(target.x, target.y);
   ctx.scale(pulse, pulse);
-
-  // Bright, layered bullseye targets with a distinct tier color.
-  ctx.fillStyle = "rgba(25, 30, 40, 0.18)";
-  ctx.beginPath();
-  ctx.arc(2, 3, target.radius + 3, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = target.color;
-  ctx.beginPath();
-  ctx.arc(0, 0, target.radius, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = "#ffffff";
-  ctx.beginPath();
-  ctx.arc(0, 0, target.radius - 5, 0, Math.PI * 2);
-  ctx.stroke();
-
-  ctx.fillStyle = "#ffffff";
-  ctx.beginPath();
-  ctx.arc(0, 0, 6, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = "#263238";
-  ctx.font = "bold 10px sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(target.points.toString(), 0, target.radius + 13);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    target.image,
+    -drawWidth / 2,
+    -drawHeight / 2,
+    drawWidth,
+    drawHeight
+  );
   ctx.restore();
 }
 
