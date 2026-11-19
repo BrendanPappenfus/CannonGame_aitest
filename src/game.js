@@ -3,7 +3,7 @@ const ctx = canvas.getContext("2d");
 
 const SPRITE_SCALE = 3;
 const player = {
-  x: canvas.width / 2 + 30,
+  x: 90,
   y: 370,
 };
 
