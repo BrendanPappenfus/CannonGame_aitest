@@ -23,6 +23,7 @@ const GRAVITY = 520;
 
 let aimAngle = 0;
 let chargingSince = null;
+let activePointerId = null;
 let charge = 0;
 let lastFrameTime = 0;
 const projectiles = [];
@@ -54,26 +55,47 @@ async function startGame() {
       aimAngle = Math.atan2(pointer.y - pivot.y, pointer.x - pivot.x);
     });
 
+    // Pointer events cover mouse, pen, and touch with one input path.
     canvas.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || chargingSince !== null) return;
+      if ((event.pointerType === "mouse" && event.button !== 0) ||
+          chargingSince !== null) return;
       event.preventDefault();
+      activePointerId = event.pointerId;
       chargingSince = performance.now();
       charge = 0;
-      canvas.setPointerCapture?.(event.pointerId);
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch {
+        // The window-level release fallback below still handles the gesture.
+      }
     });
 
-    window.addEventListener("pointerup", (event) => {
+    function finishCharge(event) {
       if (chargingSince === null) return;
-      event.preventDefault();
+      if (event && activePointerId !== null &&
+          event.pointerId !== activePointerId) return;
+      event?.preventDefault();
+      // Fire before clearing the start time; fireProjectile uses it to calculate power.
       fireProjectile(barrel, base, cannonball);
       chargingSince = null;
+      activePointerId = null;
       charge = 0;
-    });
+    }
 
-    window.addEventListener("pointercancel", () => {
+    function cancelCharge(event) {
+      if (chargingSince === null) return;
+      if (event && activePointerId !== null &&
+          event.pointerId !== activePointerId) return;
       chargingSince = null;
+      activePointerId = null;
       charge = 0;
-    });
+    }
+
+    canvas.addEventListener("pointerup", finishCharge);
+    window.addEventListener("pointerup", finishCharge);
+    canvas.addEventListener("pointercancel", cancelCharge);
+    canvas.addEventListener("lostpointercapture", cancelCharge);
+    window.addEventListener("blur", cancelCharge);
 
     requestAnimationFrame((time) => gameLoop(time, barrel, base, cannonball));
   } catch (error) {
