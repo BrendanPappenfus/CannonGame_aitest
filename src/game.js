@@ -39,11 +39,15 @@ let timeRemaining = ROUND_DURATION_SECONDS;
 let scoreTowardUpgrade = 0;
 let gamePaused = false;
 let gameOver = false;
+let gameStarted = false;
 let upgradeChoices = [];
+let selectedUpgradeIndex = null;
 let pendingUpgradePicks = 0;
 let chargeUpgradeLevel = 0;
 let targetSpawnUpgradeLevel = 0;
 let rareTargetUpgradeLevel = 0;
+let splitShotLevel = 0;
+let bounceShotLevel = 0;
 let cannonballTier = 0;
 let cannonballSprites = [];
 let targets = [];
@@ -99,6 +103,12 @@ async function startGame() {
       if (event.pointerType === "mouse" && event.button !== 0) return;
       const point = getCanvasPoint(event);
 
+      if (!gameStarted && !gameOver) {
+        event.preventDefault();
+        if (point.x >= canvas.width / 2 - 125 && point.x <= canvas.width / 2 + 125 &&
+            point.y >= 330 && point.y <= 390) gameStarted = true;
+        return;
+      }
       if (gamePaused && !gameOver) {
         event.preventDefault();
         handleUpgradeChoice(point);
@@ -197,7 +207,7 @@ function gameLoop(time, barrel, base, targetSprites) {
   const deltaSeconds = lastFrameTime ? Math.min((time - lastFrameTime) / 1000, 0.04) : 0;
   lastFrameTime = time;
 
-  if (!gamePaused && !gameOver) {
+  if (gameStarted && !gamePaused && !gameOver) {
     timeRemaining = Math.max(0, timeRemaining - deltaSeconds);
     if (timeRemaining <= 0) {
       gameOver = true;
@@ -245,6 +255,8 @@ function updateProjectiles(deltaSeconds) {
           lifetime: 1100,
         });
         targets.splice(i, 1);
+        handleProjectileHit(projectile, target);
+        break;
       }
     }
   }
@@ -253,6 +265,42 @@ function updateProjectiles(deltaSeconds) {
     const p = projectiles[i];
     if (p.x < -50 || p.x > canvas.width + 50 || p.y > canvas.height + 50 || p.y < -100) {
       projectiles.splice(i, 1);
+    }
+  }
+}
+
+function handleProjectileHit(projectile, hitTarget) {
+  const splitChance = Math.min(1, splitShotLevel * 0.10);
+  if (cannonballTier > 0 && Math.random() < splitChance) {
+    const childTier = cannonballTier - 1;
+    const speed = Math.hypot(projectile.vx, projectile.vy) * 0.82;
+    const angle = Math.atan2(projectile.vy, projectile.vx);
+    const spread = 0.24;
+    for (const direction of [-1, 1]) {
+      const childAngle = angle + direction * spread;
+      projectiles.push({
+        x: projectile.x,
+        y: projectile.y,
+        vx: Math.cos(childAngle) * speed,
+        vy: Math.sin(childAngle) * speed,
+        image: cannonballSprites[childTier],
+      });
+    }
+  }
+
+  const bounceChance = Math.min(1, bounceShotLevel * 0.10);
+  if (Math.random() < bounceChance) {
+    const nextTarget = targets
+      .filter((target) => target !== hitTarget)
+      .sort((a, b) =>
+        Math.hypot(a.x - projectile.x, a.y - projectile.y) -
+        Math.hypot(b.x - projectile.x, b.y - projectile.y)
+      )[0];
+    if (nextTarget) {
+      const speed = Math.hypot(projectile.vx, projectile.vy);
+      const angle = Math.atan2(nextTarget.y - projectile.y, nextTarget.x - projectile.x);
+      projectile.vx = Math.cos(angle) * speed;
+      projectile.vy = Math.sin(angle) * speed;
     }
   }
 }
@@ -360,6 +408,7 @@ function drawScene(barrel, base) {
   drawScore();
   drawScorePopups();
   drawTopProgressBar();
+  if (!gameStarted && !gameOver) drawStartScreen();
   if (gamePaused && !gameOver) drawUpgradeScreen();
   if (gameOver) drawGameOverScreen();
 }
@@ -450,6 +499,20 @@ const UPGRADE_DEFINITIONS = [
     available: () => true,
     apply: () => rareTargetUpgradeLevel++,
   },
+  {
+    id: "split-shot",
+    title: "Split Shot",
+    description: "10% chance to split on impact into two smaller cannonballs. Chance stacks; small shots do not split.",
+    available: () => cannonballTier >= 1,
+    apply: () => splitShotLevel++,
+  },
+  {
+    id: "bounce-shot",
+    title: "Bounce Shot",
+    description: "10% chance to redirect toward the nearest other target after a hit. Chance stacks.",
+    available: () => true,
+    apply: () => bounceShotLevel++,
+  },
 ];
 
 function showUpgradeChoices() {
@@ -459,6 +522,7 @@ function showUpgradeChoices() {
   charge = 0;
   const available = UPGRADE_DEFINITIONS.filter((upgrade) => upgrade.available());
   upgradeChoices = shuffleArray(available).slice(0, Math.min(3, available.length));
+  selectedUpgradeIndex = null;
 }
 
 function shuffleArray(items) {
@@ -471,6 +535,22 @@ function shuffleArray(items) {
 }
 
 function handleUpgradeChoice(point) {
+  const confirmX = canvas.width / 2 - 115;
+  const confirmY = 405;
+  if (selectedUpgradeIndex !== null && point.x >= confirmX && point.x <= confirmX + 230 &&
+      point.y >= confirmY && point.y <= confirmY + 54) {
+    upgradeChoices[selectedUpgradeIndex].apply();
+    pendingUpgradePicks = Math.max(0, pendingUpgradePicks - 1);
+    if (pendingUpgradePicks > 0) {
+      showUpgradeChoices();
+    } else {
+      upgradeChoices = [];
+      selectedUpgradeIndex = null;
+      gamePaused = false;
+    }
+    return;
+  }
+
   const cardWidth = 250;
   const gap = 18;
   const totalWidth = cardWidth * upgradeChoices.length + gap * (upgradeChoices.length - 1);
@@ -482,14 +562,7 @@ function handleUpgradeChoice(point) {
     const x = startX + i * (cardWidth + gap);
     if (point.x >= x && point.x <= x + cardWidth &&
         point.y >= cardY && point.y <= cardY + cardHeight) {
-      upgradeChoices[i].apply();
-      pendingUpgradePicks = Math.max(0, pendingUpgradePicks - 1);
-      if (pendingUpgradePicks > 0) {
-        showUpgradeChoices();
-      } else {
-        upgradeChoices = [];
-        gamePaused = false;
-      }
+      selectedUpgradeIndex = i;
       return;
     }
   }
@@ -532,8 +605,8 @@ function drawUpgradeScreen() {
     const x = startX + index * (cardWidth + gap);
     ctx.fillStyle = "#f4f5f7";
     ctx.fillRect(x, cardY, cardWidth, cardHeight);
-    ctx.strokeStyle = "#e0b33d";
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = selectedUpgradeIndex === index ? "#19a974" : "#e0b33d";
+    ctx.lineWidth = selectedUpgradeIndex === index ? 6 : 3;
     ctx.strokeRect(x, cardY, cardWidth, cardHeight);
 
     ctx.fillStyle = "#263238";
@@ -544,8 +617,22 @@ function drawUpgradeScreen() {
     wrapCanvasText(upgrade.description, x + cardWidth / 2, cardY + 76, cardWidth - 30, 20);
     ctx.fillStyle = "#9a6b00";
     ctx.font = "bold 12px sans-serif";
-    ctx.fillText("CLICK TO SELECT", x + cardWidth / 2, cardY + 128);
+    ctx.fillStyle = selectedUpgradeIndex === index ? "#147a52" : "#9a6b00";
+    ctx.font = "bold 12px sans-serif";
+    ctx.fillText(selectedUpgradeIndex === index ? "SELECTED" : "CLICK TO SELECT",
+      x + cardWidth / 2, cardY + 128);
   });
+
+  const confirmX = canvas.width / 2 - 115;
+  const confirmY = 405;
+  ctx.fillStyle = selectedUpgradeIndex === null ? "#858b94" : "#238653";
+  ctx.fillRect(confirmX, confirmY, 230, 54);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(confirmX, confirmY, 230, 54);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 18px sans-serif";
+  ctx.fillText("CONFIRM UPGRADE", canvas.width / 2, confirmY + 28);
   ctx.restore();
 }
 
@@ -565,6 +652,29 @@ function wrapCanvasText(text, centerX, startY, maxWidth, lineHeight) {
     }
   }
   if (line) ctx.fillText(line, centerX, y);
+}
+
+function drawStartScreen() {
+  ctx.save();
+  ctx.fillStyle = "rgba(15, 20, 30, 0.78)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "bold 38px sans-serif";
+  ctx.fillText("READY, AIM, FIRE!", canvas.width / 2, 220);
+  ctx.font = "18px sans-serif";
+  ctx.fillText("You have 120 seconds. Score as many points as you can!",
+    canvas.width / 2, 270);
+  ctx.fillStyle = "#238653";
+  ctx.fillRect(canvas.width / 2 - 125, 330, 250, 60);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(canvas.width / 2 - 125, 330, 250, 60);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 21px sans-serif";
+  ctx.fillText("START GAME", canvas.width / 2, 360);
+  ctx.restore();
 }
 
 function drawGameOverScreen() {
@@ -594,7 +704,11 @@ function restartRun() {
   chargeUpgradeLevel = 0;
   targetSpawnUpgradeLevel = 0;
   rareTargetUpgradeLevel = 0;
+  splitShotLevel = 0;
+  bounceShotLevel = 0;
   cannonballTier = 0;
+  gameStarted = false;
+  selectedUpgradeIndex = null;
   targets = [];
   projectiles.length = 0;
   scorePopups = [];
