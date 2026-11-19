@@ -7,6 +7,13 @@ const player = {
   y: 370,
 };
 
+// The barrel sprite points left in its unrotated orientation. Its breech
+// (right-hand end) is the rotation pivot, mounted above the fixed stand.
+const BARREL_PIVOT_X = 0.88;
+const BARREL_PIVOT_Y = 0.5;
+
+let aimAngle = 0;
+
 function loadSprite(path) {
   return new Promise((resolve, reject) => {
     const sprite = new Image();
@@ -26,6 +33,20 @@ async function startGame() {
       loadSprite(basePath),
     ]);
 
+    canvas.addEventListener("pointermove", (event) => {
+      const bounds = canvas.getBoundingClientRect();
+      const mouseX = (event.clientX - bounds.left) * (canvas.width / bounds.width);
+      const mouseY = (event.clientY - bounds.top) * (canvas.height / bounds.height);
+
+      const pivotX = player.x;
+      const pivotY = player.y + 1 * SPRITE_SCALE;
+      const targetAngle = Math.atan2(mouseY - pivotY, mouseX - pivotX);
+
+      // The artwork's muzzle points left, so offset the target direction by PI.
+      aimAngle = targetAngle - Math.PI;
+      drawPlayer(barrel, base);
+    });
+
     drawPlayer(barrel, base);
   } catch (error) {
     console.error(error);
@@ -43,16 +64,23 @@ function drawPlayer(barrel, base) {
   const baseWidth = base.naturalWidth * SPRITE_SCALE;
   const baseHeight = base.naturalHeight * SPRITE_SCALE;
 
-  // Draw the barrel first, centered on the player's position.
+  const pivotX = player.x;
+  const pivotY = player.y + 1 * SPRITE_SCALE;
+
+  // Rotate only the barrel around its breech; the stand remains stationary.
+  ctx.save();
+  ctx.translate(pivotX, pivotY);
+  ctx.rotate(aimAngle);
   ctx.drawImage(
     barrel,
-    player.x - barrelWidth / 2,
-    player.y - barrelHeight + 12 * SPRITE_SCALE,
+    -barrelWidth * BARREL_PIVOT_X,
+    -barrelHeight * BARREL_PIVOT_Y,
     barrelWidth,
     barrelHeight,
   );
+  ctx.restore();
 
-  // Draw the stand afterward so the base sits visually in front of the barrel.
+  // Draw the stand last so it remains fixed and in front of the barrel.
   ctx.drawImage(
     base,
     player.x - baseWidth / 2,
