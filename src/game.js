@@ -7,10 +7,13 @@ const player = {
   y: 370,
 };
 
-// The barrel sprite points left in its unrotated orientation. Its breech
-// (right-hand end) is the rotation pivot, mounted above the fixed stand.
-const BARREL_PIVOT_X = 0.88;
-const BARREL_PIVOT_Y = 0.5;
+// Pivot in source-image pixels: halfway between the first two rear bands.
+const BARREL_PIVOT_X = 74 / 85;
+const BARREL_PIVOT_Y = 11 / 22;
+
+// Center of the gray pivot cap on the stand sprite, in source-image pixels.
+const STAND_PIVOT_X = 35;
+const STAND_PIVOT_Y = 10;
 
 let aimAngle = 0;
 
@@ -38,8 +41,8 @@ async function startGame() {
       const mouseX = (event.clientX - bounds.left) * (canvas.width / bounds.width);
       const mouseY = (event.clientY - bounds.top) * (canvas.height / bounds.height);
 
-      const pivotX = player.x;
-      const pivotY = player.y + 1 * SPRITE_SCALE;
+      const pivotX = player.x - (base.naturalWidth * SPRITE_SCALE) / 2 + STAND_PIVOT_X * SPRITE_SCALE;
+      const pivotY = player.y + STAND_PIVOT_Y * SPRITE_SCALE;
       const targetAngle = Math.atan2(mouseY - pivotY, mouseX - pivotX);
 
       // The muzzle points right in the source artwork, so use the target angle directly.
@@ -64,8 +67,8 @@ function drawPlayer(barrel, base) {
   const baseWidth = base.naturalWidth * SPRITE_SCALE;
   const baseHeight = base.naturalHeight * SPRITE_SCALE;
 
-  const pivotX = player.x;
-  const pivotY = player.y + 1 * SPRITE_SCALE;
+  const pivotX = player.x - baseWidth / 2 + STAND_PIVOT_X * SPRITE_SCALE;
+  const pivotY = player.y + STAND_PIVOT_Y * SPRITE_SCALE;
 
   // Rotate only the barrel around its breech; the stand remains stationary.
   ctx.save();
